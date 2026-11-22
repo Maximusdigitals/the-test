@@ -247,9 +247,31 @@ function score(dimsRaw, m, cal = CAL) {
   Object.keys(sr).forEach(k => cands[k] = sr[k] * cal.sig[k]);
   let variant = null; Object.keys(cands).forEach(k => { if (variant === null || cands[k] > cands[variant]) variant = k; });
   const ending = ENDINGS.find(e => e.p === primary && e.v === variant);
-  return { adj, norm, primary, variant, ending };
+  return { adj, norm, primary, variant, ending, order, cands };
 }
+/* ---------- reference population (simulated players, see the-test-tools/ref.js) ---------- */
+/*REF*/const REF = {"n":40000,"q":{"C":[-1.911,-1.532,-1.152,-1.152,-1.152,-1.152,-0.772,-0.772,-0.772,-0.772,-0.772,-0.772,-0.393,-0.393,-0.393,-0.393,-0.393,-0.393,-0.393,-0.013,-0.013,-0.013,-0.013,-0.013,-0.013,0.367,0.367,0.367,0.367,0.367,0.746,0.746,0.746,0.746,1.126,1.126,1.126,1.506,1.506,1.885,3.784],"D":[-2.245,-1.586,-1.256,-1.256,-0.993,-0.927,-0.927,-0.927,-0.729,-0.663,-0.597,-0.597,-0.597,-0.499,-0.4,-0.334,-0.268,-0.268,-0.268,-0.169,-0.07,-0.004,0.062,0.062,0.062,0.16,0.259,0.325,0.391,0.424,0.523,0.655,0.721,0.754,0.918,1.05,1.182,1.38,1.676,2.17,5.004],"M":[-1.295,-1.295,-1.295,-0.896,-0.896,-0.896,-0.896,-0.896,-0.896,-0.496,-0.496,-0.496,-0.496,-0.496,-0.496,-0.496,-0.496,-0.496,-0.096,-0.096,-0.096,-0.096,-0.096,-0.096,-0.096,-0.096,0.303,0.303,0.303,0.303,0.303,0.303,0.703,0.703,0.703,1.103,1.103,1.103,1.502,2.302,4.3],"O":[-1.727,-1.374,-1.374,-1.092,-1.021,-1.021,-1.021,-0.739,-0.739,-0.668,-0.668,-0.668,-0.457,-0.386,-0.386,-0.316,-0.316,-0.316,-0.316,-0.104,-0.034,-0.034,-0.034,0.037,0.037,0.037,0.249,0.319,0.319,0.39,0.39,0.601,0.672,0.743,0.743,1.025,1.095,1.377,1.66,2.153,4.481],"L":[-2.279,-1.633,-1.31,-1.31,-0.987,-0.987,-0.987,-0.922,-0.664,-0.664,-0.664,-0.599,-0.599,-0.534,-0.341,-0.341,-0.341,-0.276,-0.276,-0.211,-0.017,-0.017,-0.017,0.047,0.112,0.306,0.306,0.306,0.37,0.435,0.629,0.629,0.693,0.758,0.952,1.016,1.275,1.34,1.663,2.05,4.183],"I":[-1.262,-1.262,-1.262,-1.223,-0.855,-0.855,-0.855,-0.855,-0.855,-0.763,-0.569,-0.447,-0.447,-0.447,-0.447,-0.447,-0.407,-0.276,-0.098,-0.04,-0.04,-0.04,-0.04,-0.04,0.053,0.192,0.368,0.368,0.368,0.368,0.458,0.633,0.775,0.775,0.828,1.093,1.183,1.428,1.633,2.259,4.815],"H":[-2.392,-1.691,-1.477,-1.346,-1.215,-1.102,-1.022,-0.938,-0.856,-0.772,-0.692,-0.629,-0.566,-0.503,-0.436,-0.366,-0.292,-0.232,-0.174,-0.113,-0.046,0.023,0.096,0.166,0.238,0.31,0.384,0.465,0.55,0.634,0.718,0.811,0.915,1.03,1.147,1.279,1.443,1.631,1.896,2.281,4.843]},"marg":[0.002,0.087,0.15,0.202,0.243,0.28,0.317,0.352,0.385,0.415,0.447,0.476,0.508,0.545,0.58,0.616,0.654,0.693,0.735,0.772,0.812,0.85,0.897,0.947,0.995,1.05,1.114,1.175,1.234,1.312,1.394,1.481,1.582,1.689,1.814,1.971,2.149,2.384,2.67,3.111,5.321],"latMed":3.19};/*/REF*/
+// how clearly this run sits in its ending: primary lead + variant lead
+function margin(res) {
+  const lead = res.norm[res.order[0]] - res.norm[res.order[1]];
+  const cv = Object.values(res.cands).sort((a, b) => b - a);
+  return lead + 0.6 * (cv[0] - cv[1]);
+}
+// position of x within a sorted quantile table -> 0..100
+function qpos(tab, x) {
+  const n = tab.length - 1;
+  if (x <= tab[0]) return 0; if (x >= tab[n]) return 100;
+  const eq = tab.map((v, j) => Math.abs(v - x) < 6e-4 ? j : -1).filter(j => j >= 0);
+  if (eq.length) return (eq[0] + eq[eq.length - 1]) / 2 / n * 100; // ties: mid-rank
+  let i = 0; while (i < n && tab[i + 1] < x) i++;
+  const span = tab[i + 1] - tab[i], f = span > 0 ? (x - tab[i]) / span : 0.5;
+  return (i + f) / n * 100;
+}
+function percentile(k, z) { return REF ? Math.max(1, Math.min(99, Math.round(qpos(REF.q[k], z)))) : 50; }
+// scaled score 0-100 (mean 50, sd 15), same ordering as the percentile
+function scaled(z) { return Math.max(1, Math.min(99, Math.round(50 + 15 * z))); }
+function confidence(res) { return REF ? Math.round(58 + 0.39 * qpos(REF.marg, margin(res))) : 75; }
 
-const api = { DIMS, DIM_NAME, DIM_CLINICAL, Q, SEQ, top, sliderResult, ENDINGS, score, behaviorAdjust, sigRaw, CAL };
+const api = { margin, percentile, scaled, confidence, get REF() { return REF; }, DIMS, DIM_NAME, DIM_CLINICAL, Q, SEQ, top, sliderResult, ENDINGS, score, behaviorAdjust, sigRaw, CAL };
 if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.TEST = api;
 })(typeof window !== 'undefined' ? window : globalThis);

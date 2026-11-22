@@ -62,7 +62,7 @@ setInterval(() => {
 }, 1000);
 document.addEventListener('visibilitychange', () => {
   if (!S.active) return;
-  if (document.hidden) { S.m.tabs++; if (phase >= 3) document.title = phase === 3 ? 'subject left the room' : 'come back'; }
+  if (document.hidden) { S.m.tabs++; if (curQ && !curQ.answered) curQ.away = (curQ.away || 0) + 1; if (phase >= 3) document.title = phase === 3 ? 'subject left the room' : 'come back'; }
   else {
     document.title = TITLES[phase];
     const n = S.m.tabs;
@@ -192,7 +192,7 @@ function showQuestion(opts = {}) {
     <div class="q-foot">${phase >= 2 && phase <= 3 && S.i >= 5 && !opts.original && S.hist.length && S.hist[S.hist.length - 1].phase === phase && !T.Q[S.hist[S.hist.length - 1].qid].timed ? '<button class="back" type="button">← back</button>' : '<span></span>'}<span class="nudge"></span></div>
   </section>${phase === 3 ? recordHTML() : ''}`;
 
-  curQ = { qid, q, t0: performance.now(), enters: 0, answered: false, opts, options };
+  curQ = { qid, q, t0: performance.now(), enters: 0, answered: false, opts, options, prompt, n };
   idleFlag = false; lastInput = Date.now();
 
   // hesitation: count mouse hovers over options
@@ -203,7 +203,7 @@ function showQuestion(opts = {}) {
   // misremembered answer on back-navigation
   if (opts.original && options) {
     let shown = opts.original.i;
-    if (!S.misremembered && phase === 3) { const others = order.filter(oi => oi !== opts.original.i); shown = others[Math.floor(rnd() * others.length)]; S.misremembered = true; curQ.fake = shown; }
+    if (!S.misremembered && phase === 3) { const others = order.filter(oi => oi !== opts.original.i); shown = others[Math.floor(rnd() * others.length)]; S.misremembered = true; curQ.fake = shown; S.fmN = n; S.fmLabel = q.label; }
     const b = $(`.opt[data-i="${shown}"]`); if (b) b.classList.add('picked');
   }
   if (q.rephrase) curQ.timers = [setTimeout(() => { $$('.opt').forEach(b => { const o = options[+b.dataset.i]; if (!o.later) return; const t = $('.opt-t', b); t.classList.add('swap'); setTimeout(() => { t.textContent = o.later; t.classList.remove('swap'); }, 500); }); curQ.rephrased = true; }, 2600)];
@@ -262,7 +262,7 @@ function setupSlider() {
   $('#slOk').onclick = () => {
     const v = +sl.value, r = T.sliderResult(v);
     if (adj > 2) r.w.H = (r.w.H || 0) + 1;
-    commitAnswer({ i: v, text: String(v), w: r.w, dark: r.dark + (adj > 2 ? ` you moved it ${adj} times first.` : ''), kind: 'slider' });
+    commitAnswer({ i: v, text: String(v), w: r.w, dark: r.dark + (adj > 2 ? ` you moved it ${adj} times first.` : ''), kind: 'slider', adj });
   };
 }
 function setupText() {
@@ -277,7 +277,7 @@ function setupText() {
     if (!w) { dark = 'nothing. you couldn\'t find one word. or you found it and didn\'t like it.'; wt = { H: 2, L: 1 }; }
     else if (dels > 0) { dark = `"${w}". you deleted ${dels} character${dels > 1 ? 's' : ''} first. the version you deleted was closer.`; wt = dels > 2 ? { H: 2, L: 1 } : { H: 1, L: 1 }; }
     else { dark = `"${w}". no edits. you've had that word ready for a while.`; wt = { C: 1, D: 1 }; }
-    commitAnswer({ i: 0, text: w || '(blank)', w: wt, dark, kind: 'text' });
+    commitAnswer({ i: 0, text: w || '(blank)', w: wt, dark, kind: 'text', dels });
   };
 }
 function clearTimers() { if (!curQ) return; clearTimeout(curQ.timeout); clearInterval(curQ.tick); (curQ.timers || []).forEach(clearTimeout); }
@@ -291,8 +291,9 @@ function choose(i) {
   const rec = { i, text, w: opt.w, dark: opt.dark, soft: opt.soft, kind: 'choice', alts };
   // re-answer after going back
   if (curQ.opts.original) {
-    if (curQ.fake === i) { S.m.falseMem = true; S.m.changed++; rec.dark = 'that\'s not what you picked the first time. you just believed me.'; }
-    else if (curQ.opts.original.i !== i) S.m.changed++;
+    if (curQ.fake === i) { S.m.falseMem = true; S.m.changed++; rec.fm = true; rec.revised = true; rec.dark = 'that\'s not what you picked the first time. you just believed me.'; }
+    else if (curQ.opts.original.i !== i) { S.m.changed++; rec.revised = true; }
+    else if (curQ.fake !== undefined) S.fmRejected = true;
   }
   $$('.opt').forEach(b => b.classList.toggle('picked', +b.dataset.i === i));
   const eligible = phase >= 2 && phase <= 4 && !curQ.q.timed && t > 5 && S.m.sure < 3 && curQ.q.type !== 'accuse';
@@ -310,8 +311,8 @@ function askSure(t, rec) {
   $('#modalSure').onclick = () => { m.hidden = true; curQ.answered = false; commitAnswer(rec, t); };
   $('#modalChange').onclick = () => {
     m.hidden = true; S.m.changed++;
-    const keepEnters = curQ.enters, t0 = curQ.t0;
-    showQuestion(curQ.opts); curQ.enters = keepEnters; curQ.t0 = t0; curQ.changedFrom = rec.i;
+    const keepEnters = curQ.enters, t0 = curQ.t0, away = curQ.away;
+    showQuestion(curQ.opts); curQ.enters = keepEnters; curQ.t0 = t0; curQ.away = away; curQ.changedFrom = rec.i;
     toast(phase === 2 ? 'logged: answer revised' : phase === 3 ? 'noted. the first one stays on file.' : 'go on. change it. i kept the first one.', 2800);
   };
 }
@@ -323,7 +324,7 @@ async function commitAnswer(rec, tOverride) {
   const t = tOverride !== undefined ? tOverride : (performance.now() - curQ.t0) / 1000;
   const hov = Math.max(0, curQ.enters - 1);
   S.m.hovers += hov;
-  const h = Object.assign({ qid: curQ.qid, phase, label: q.label, t, hov }, rec);
+  const h = Object.assign({ qid: curQ.qid, phase, label: q.label, t, hov, n: curQ.n, prompt: curQ.prompt, away: curQ.away || 0, revised: curQ.changedFrom !== undefined }, rec);
   addW(h.w); S.hist.push(h);
   if (rec.kind === 'choice') S.ans[curQ.qid] = rec.text;
   S.m.times.push(t);
@@ -387,7 +388,7 @@ function metrics() {
   return { avgTime: avg, avgHovers: S.m.hovers / Math.max(1, times.length), changed: S.m.changed, backs: S.m.backs, tabs: S.m.tabs, idles: S.m.idles, hour: d.getHours(), timeouts: S.m.timeouts, deletes: S.m.deletes };
 }
 async function reveal() {
-  S.active = false; curQ = null;
+  S.active = false; curQ = null; S.ended = Date.now();
   setPhase(5);
   const m = metrics(), res = T.score(S.dims, m);
   S.res = res; S.mm = m;
@@ -401,59 +402,199 @@ async function reveal() {
 }
 
 function hsl(e, l = e.light, s = 70, a = 1) { return `hsla(${e.hue},${s}%,${l}%,${a})`; }
+/* ---------------- the evaluation report ---------------- */
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const ord = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+const pad2 = n => String(n).padStart(2, '0');
+const MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const PH_NAME = { 1: 'I · wellness', 2: 'II · intake', 3: 'III · case review', 4: 'IV · ——' };
+const RISK = ['low', 'moderate', 'elevated', 'high'], CTRL = ['adequate', 'reduced', 'low', 'absent'];
+const lvl = v => v < 40 ? 0 : v < 65 ? 1 : v < 85 ? 2 : 3;
+const clip = (s, n) => s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s;
+const dur = sec => `${Math.floor(sec / 60)}m ${pad2(Math.round(sec % 60))}s`;
+const redact = (w = 6) => `<span class="rx" style="--w:${w}ch" aria-label="redacted"></span>`;
+
+function analysis() {
+  const res = S.res, m = S.mm, e = res.ending;
+  const pct = {}, ss = {};
+  T.DIMS.forEach(k => { pct[k] = T.percentile(k, res.norm[k]); ss[k] = T.scaled(res.norm[k]); });
+  const items = S.hist.slice().sort((a, b) => a.n - b.n);
+  const timed = items.filter(h => h.t > 0);
+  const tsorted = timed.map(h => h.t).sort((a, b) => a - b);
+  const median = tsorted.length ? tsorted[Math.floor(tsorted.length / 2)] : 0;
+  const mean = m.avgTime, sd = Math.sqrt(timed.reduce((a, h) => a + (h.t - mean) ** 2, 0) / Math.max(1, timed.length));
+  const answered = timed.filter(h => h.kind === 'choice');
+  const slow = timed.slice().sort((a, b) => b.t - a.t)[0], fast = answered.slice().sort((a, b) => a.t - b.t)[0];
+  const cv = mean ? sd / mean : 0;
+  const hesitation = Math.round(clamp(Math.max(0, (mean - 1.2) / 6) * 40 + Math.min(20, m.avgHovers * 10) + Math.min(20, S.m.changed * 7) + S.m.timeouts * 8 + S.m.idles * 4 + Math.min(10, S.m.deletes * 1.5), 1, 99));
+  const sliderH = items.find(h => h.kind === 'slider');
+  const consistency = Math.round(clamp(100 - 38 * Math.min(1.2, cv) - 9 * S.m.changed - 6 * S.m.backs - (S.m.falseMem ? 18 : 0) - (sliderH && sliderH.adj > 2 ? 6 : 0) - 5 * S.m.timeouts, 4, 98));
+  const conf = T.confidence(res);
+  const total = ((S.ended || Date.now()) - S.started) / 1000;
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const d = new Date(S.started || Date.now()), de = new Date(S.ended || Date.now());
+  const caseNo = `7B-${String(d.getFullYear()).slice(2)}${pad2(d.getMonth() + 1)}-${S.id.slice(3)}-${pad2(e.n)}`;
+  const risk = [
+    ['affect control', 'c', Math.round(0.6 * pct.I + 0.4 * pct.D)],
+    ['empathic response', 'c', Math.round(0.7 * pct.D + 0.3 * pct.M)],
+    ['manipulative tendency', 'r', Math.round(0.6 * pct.L + 0.4 * pct.M)],
+    ['need for control', 'r', pct.C],
+    ['fixation / rumination', 'r', Math.round(0.7 * pct.O + 0.3 * pct.H)],
+    ['impulse regulation', 'c', pct.I],
+    ['decisional paralysis', 'r', Math.max(pct.H, hesitation)],
+    ['candor', 'c', Math.round(clamp(0.65 * pct.L + (sliderH ? Math.max(0, sliderH.i - 50) * 0.5 : 10) + S.m.changed * 6, 1, 99))],
+    ['reality monitoring', 'c', S.m.falseMem ? 90 : S.misremembered ? 25 : -1],
+    ['attention to examiner', 'c', clamp(S.m.tabs * 30 + S.m.idles * 18, 5, 99)],
+  ].map(([label, kind, v]) => v < 0 ? { label, word: 'not tested', l: -1 } : { label, l: lvl(v), word: (kind === 'c' ? CTRL : RISK)[lvl(v)], v });
+  const flagged = risk.filter(r => r.l >= 2).length;
+  return { res, m, e, pct, ss, items, timed, median, mean, sd, slow, fast, hesitation, consistency, conf, total, coarse, d, de, caseNo, risk, flagged, sliderH };
+}
+
+function radarSVG(A, size = 300) {
+  const c = size / 2, R = size * 0.36, n = T.DIMS.length;
+  const pt = (k, v) => { const a = -Math.PI / 2 + k / n * Math.PI * 2; return [c + Math.cos(a) * R * v / 100, c + Math.sin(a) * R * v / 100]; };
+  const poly = vs => vs.map((v, k) => pt(k, v).map(x => x.toFixed(1)).join(',')).join(' ');
+  let g = '';
+  [25, 50, 75, 100].forEach(r => g += `<polygon points="${poly(T.DIMS.map(() => r))}" class="rd-ring${r === 50 ? ' mid' : ''}"/>`);
+  T.DIMS.forEach((k, i) => { const [x, y] = pt(i, 100); g += `<line x1="${c}" y1="${c}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" class="rd-ax"/>`; });
+  g += `<polygon points="${poly(T.DIMS.map(k => A.ss[k]))}" class="rd-sub"/>`;
+  T.DIMS.forEach((k, i) => { const [x, y] = pt(i, A.ss[k]); g += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" class="rd-dot"/>`; });
+  T.DIMS.forEach((k, i) => { const [x, y] = pt(i, 128); const anc = x < c - 8 ? 'end' : x > c + 8 ? 'start' : 'middle'; g += `<text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="${anc}" class="rd-lb">${T.DIM_NAME[k]}<tspan x="${x.toFixed(1)}" dy="13" class="rd-v">${A.ss[k]}</tspan></text>`; });
+  return `<svg class="radar" viewBox="${-size * 0.12} 0 ${size * 1.24} ${size}" role="img" aria-label="trait profile radar chart">${g}</svg>`;
+}
+
+function latencySVG(A) {
+  const W = 640, H = 190, L = 34, B = 30, top = 14, its = A.items, n = its.length;
+  const max = Math.max(8, Math.ceil(Math.max(...its.map(h => h.t || 0)) + 0.5));
+  const bw = (W - L - 6) / n, y = t => top + (H - top - B) * (1 - t / max);
+  let g = '';
+  [0, max / 2, max].forEach(t => g += `<line x1="${L}" x2="${W}" y1="${y(t).toFixed(1)}" y2="${y(t).toFixed(1)}" class="lt-grid"/><text x="${L - 6}" y="${(y(t) + 3).toFixed(1)}" text-anchor="end" class="lt-ax">${fmt(t).replace('.0', '')}s</text>`);
+  let ph = 0;
+  its.forEach((h, k) => {
+    const x = L + k * bw;
+    if (h.phase !== ph) { ph = h.phase; g += `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${top}" y2="${H - B + 4}" class="lt-ph"/><text x="${(x + 4).toFixed(1)}" y="${top + 9}" class="lt-pn">${['', 'I', 'II', 'III', 'IV'][ph]}</text>`; }
+    const cls = h.kind === 'timeout' ? 'to' : h === A.slow ? 'sl' : h === A.fast ? 'fa' : '';
+    const t = h.t || 0;
+    g += `<rect x="${(x + bw * 0.18).toFixed(1)}" y="${y(t).toFixed(1)}" width="${(bw * 0.64).toFixed(1)}" height="${(y(0) - y(t)).toFixed(1)}" class="lt-b ${cls}"><title>Q${h.n} · ${fmt(t)}s</title></rect>`;
+    if (h.revised || h.away) g += `<text x="${(x + bw / 2).toFixed(1)}" y="${(y(t) - 4).toFixed(1)}" text-anchor="middle" class="lt-mk">${h.revised ? '↺' : ''}${h.away ? '◌' : ''}</text>`;
+    g += `<text x="${(x + bw / 2).toFixed(1)}" y="${H - B + 16}" text-anchor="middle" class="lt-ax">${h.n}</text>`;
+  });
+  const ry = y(T.REF ? T.REF.latMed : 3.2);
+  g += `<line x1="${L}" x2="${W}" y1="${ry.toFixed(1)}" y2="${ry.toFixed(1)}" class="lt-ref"/>`;
+  return `<svg class="latency" viewBox="0 0 ${W} ${H}" role="img" aria-label="response time per question">${g}</svg>`;
+}
+
+function impressions(A) {
+  const out = [], q = h => `Q${h.n} (“${esc(clip(h.label, 52))}”)`, ref = T.REF ? T.REF.latMed : 3.2;
+  const [p1, p2] = A.res.order;
+  out.push(`Highest elevation on <b>${T.DIM_CLINICAL[p1]}</b> (SS ${A.ss[p1]}, ${ord(A.pct[p1])} percentile), followed by ${T.DIM_CLINICAL[p2]} (SS ${A.ss[p2]}, ${ord(A.pct[p2])}). ${A.pct[p1] >= 85 ? 'Elevation exceeds the reference range.' : 'Elevation is within range, which is not reassuring.'}`);
+  if (A.slow) {
+    if (A.slow.kind === 'timeout') out.push(`Subject let the timer expire on ${q(A.slow)} and gave no answer. Response withheld for <b>${fmt(A.slow.t)}s</b>.`);
+    else out.push(`Subject took <b>${fmt(A.slow.t)}s</b> on ${q(A.slow)}, ${fmt(A.slow.t / ref)}× the reference median, then chose “${esc(clip(A.slow.text, 60))}”.${A.slow.hov ? ` ${A.slow.hov} other option${A.slow.hov > 1 ? 's were' : ' was'} considered first.` : ''}`);
+  }
+  if (A.fast && A.fast !== A.slow) {
+    const words = String(A.fast.prompt || A.fast.label).split(/\s+/).length, read = Math.max(0.8, words * 0.24);
+    out.push(`Fastest response: <b>${fmt(A.fast.t)}s</b> on ${q(A.fast)}, “${esc(clip(A.fast.text, 50))}”. ${A.fast.t < read ? `Estimated reading time for this item is ${fmt(read)}s. The answer came before the question was finished.` : 'Consistent with a rehearsed answer.'}`);
+  }
+  if (S.m.falseMem) out.push(`When shown a <b>falsified record</b> of Q${S.fmN}, subject accepted the altered answer as their own. Reality monitoring: compromised.`);
+  else if (S.misremembered) out.push(`Shown a falsified record of Q${S.fmN}, subject ${S.fmRejected ? 'restored the original answer' : 'chose a third option entirely'}. Subject remembers what they said. Subject checks.`);
+  else out.push(`False-memory probe not administered: subject never returned to a previous item (0 back-navigations).`);
+  if (S.m.changed) out.push(`<b>${S.m.changed}</b> answer${S.m.changed > 1 ? 's' : ''} revised after initial selection. Originals retained on file.`);
+  if (A.sliderH) out.push(`Self-rated honesty: <b>${A.sliderH.i}/100</b>${A.sliderH.adj ? ` (adjusted ${A.sliderH.adj}× before submitting)` : ''}. Impression management at the ${ord(A.pct.L)} percentile.${A.sliderH.i >= 70 && A.pct.L >= 60 ? ' The two figures are not compatible.' : A.sliderH.i < 50 ? ' Subject volunteered dishonesty. This is itself a strategy.' : ''}`);
+  const acc = A.items.find(h => h.qid === 'q13');
+  if (acc) out.push(`Asked which earlier answer was a lie, subject named ${esc(acc.text)}${acc.t ? ` after ${fmt(acc.t)}s` : ''}.`);
+  out.push(S.word ? `Self-description: “${esc(S.word)}”. ${S.m.deletes ? `${S.m.deletes} character${S.m.deletes > 1 ? 's' : ''} deleted before submission.` : 'Typed without correction.'}` : `Self-description: none provided. ${S.m.deletes} character${S.m.deletes === 1 ? '' : 's'} typed and deleted.`);
+  out.push(S.m.tabs || S.m.idles ? `Subject left the session <b>${S.m.tabs}×</b> and went idle ${S.m.idles}× (9s+ without input). Examiner was not informed why.` : `Subject never looked away across ${dur(A.total)}. Sustained attention under observation.`);
+  if (S.m.hovers > 2) out.push(`Pointer tracking recorded <b>${S.m.hovers}</b> options considered and rejected.`);
+  return out;
+}
+
 function report() {
   setPhase(6);
-  const { ending: e, norm } = S.res, m = S.mm;
+  const A = analysis(), { e, m } = A;
+  S.A = A;
   document.body.style.setProperty('--ec', hsl(e));
-  const times = S.hist.filter(h => h.t);
-  const slow = times.slice().sort((a, b) => b.t - a.t)[0], fast = times.slice().sort((a, b) => a.t - b.t)[0];
-  const d = new Date(), tod = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase().replace(/\s/g, '') + ' · ' + d.toLocaleDateString([], { weekday: 'long' }).toLowerCase();
-  const total = (Date.now() - S.started) / 1000;
-  const stat = (k, v, wide) => `<div class="${wide ? 'wide' : ''}"><dt>${k}</dt><dd>${v}</dd></div>`;
-  const statsHTML = [
-    stat('average time per answer', `${fmt(m.avgTime)}s`),
-    stat('time of day', esc(tod)),
-    stat('slowest answer', slow ? `${fmt(slow.t)}s on "${esc(slow.label)}"` : '—', true),
-    stat('fastest answer', fast ? `${fmt(fast.t)}s on "${esc(fast.label)}"` : '—', true),
-    stat('answers considered, not chosen', `${S.m.hovers}${S.m.hovers === 0 ? ' <small>(or you were on a phone)</small>' : ''}`),
-    stat('answers changed', String(S.m.changed)),
-    stat('times you went back', String(S.m.backs)),
-    stat('accepted a false memory', S.m.falseMem ? 'yes' : (S.m.backs ? 'no' : 'not tested')),
-    stat('times you looked away', String(S.m.tabs)),
-    stat('idle stretches', String(S.m.idles)),
-    stat('timers you ran out', String(S.m.timeouts)),
-    stat('characters deleted', String(S.m.deletes)),
-    stat('total time', `${Math.floor(total / 60)}m ${Math.round(total % 60)}s`),
-    stat('self-description', S.word ? `"${esc(S.word)}"` : '—'),
+  const fld = (k, v, cls = '') => `<div class="fld ${cls}"><dt>${k}</dt><dd>${v}</dd></div>`;
+  const tf = d => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const dateStr = `${pad2(A.d.getDate())} ${MON[A.d.getMonth()]} ${A.d.getFullYear()}`;
+  const idHTML = [
+    fld('case no.', A.caseNo), fld('subject', S.id), fld('date of evaluation', dateStr),
+    fld('session', `${tf(A.d)} – ${tf(A.de)}`), fld('duration', dur(A.total)), fld('input device', A.coarse ? 'touch · no pointer data' : 'pointer · tracked'),
+    fld('instrument', 'form 7-b · 15-item adaptive behavioural battery', 'wide'),
+    fld('examiner', `${redact(9)} <small>(automated)</small>`), fld('referral', 'self-referred'), fld('prior sessions', last ? `1 on file (“${esc(clip(last.title, 26))}”)` : 'none on file'),
   ].join('');
-  const vals = T.DIMS.map(k => norm[k]); const mn = Math.min(...vals), mx = Math.max(...vals);
-  const traits = T.DIMS.map(k => { const v = Math.round(12 + 88 * (norm[k] - mn) / Math.max(0.001, mx - mn)); return `<div class="trait"><span>${T.DIM_CLINICAL[k]}</span><i style="--v:${v}%"></i><b>${v}</b></div>`; }).join('');
-  // reinterpret the harmless early answers first
+  const scales = T.DIMS.map(k => `<tr><td>${T.DIM_CLINICAL[k]}<small>${T.DIM_NAME[k]}</small></td><td>${fmt(A.res.adj[k])}</td><td><b>${A.ss[k]}</b></td><td>${ord(A.pct[k])}</td><td class="sbar"><i style="--v:${A.ss[k]}%" class="${A.pct[k] >= 85 ? 'hi' : ''}"></i></td></tr>`).join('');
+  const flag = h => [h.kind === 'timeout' ? 'timed out' : '', h.hov ? `${h.hov} considered` : '', h.revised ? (h.fm ? 'false memory' : 'revised') : '', h.away ? 'looked away' : '', h.kind === 'slider' && h.adj ? `${h.adj} adj.` : '', h.kind === 'text' && h.dels ? `${h.dels} del.` : ''].filter(Boolean).join(' · ');
+  const rows = A.items.map(h => `<tr class="${h === A.slow ? 'sl' : h === A.fast ? 'fa' : ''}"><td>${pad2(h.n)}</td><td>${esc(clip(h.label, 64))}<span class="ans">${h.kind === 'slider' ? `${esc(h.text)}/100` : h.kind === 'timeout' ? '— no answer —' : `“${esc(clip(h.text.replace(/^"|"$/g, ''), 70))}”`}</span>${flag(h) ? `<small class="obs-m">${flag(h)}</small>` : ''}</td><td>${fmt(h.t || 0)}s</td><td>${flag(h) || '—'}</td></tr>`).join('');
+  const metric = (k, v, s = '') => `<div class="mt"><dt>${k}</dt><dd>${v}</dd>${s ? `<small>${s}</small>` : ''}</div>`;
+  const metricsHTML = [
+    metric('mean latency', `${fmt(A.mean)}s`, `median ${fmt(A.median)}s · sd ${fmt(A.sd)}s`),
+    metric('hesitation index', `${A.hesitation}<em>/100</em>`, A.hesitation >= 60 ? 'elevated' : A.hesitation >= 35 ? 'moderate' : 'low'),
+    metric('response consistency', `${A.consistency}<em>/100</em>`, A.consistency < 50 ? 'unreliable' : A.consistency < 75 ? 'variable' : 'stable'),
+    metric('answers revised', String(S.m.changed), `${S.m.backs} back-navigation${S.m.backs === 1 ? '' : 's'}`),
+    metric('false memory probe', S.m.falseMem ? 'accepted' : S.misremembered ? 'rejected' : 'n/a', S.misremembered ? `Q${S.fmN}` : 'not administered'),
+    metric('honesty self-rating', A.sliderH ? `${A.sliderH.i}<em>/100</em>` : '—', A.sliderH ? `${A.sliderH.adj || 0} adjustment${A.sliderH.adj === 1 ? '' : 's'}` : ''),
+    metric('looked away', `${S.m.tabs}×`, `${S.m.idles} idle period${S.m.idles === 1 ? '' : 's'}`),
+    metric('timers expired', String(S.m.timeouts), 'of 2 timed items'),
+    metric('one-word answer', S.word ? `“${esc(clip(S.word, 14))}”` : '—', `${S.m.deletes} deletion${S.m.deletes === 1 ? '' : 's'}`),
+    metric('considered, not chosen', A.coarse && !S.m.hovers ? 'n/a' : String(S.m.hovers), A.coarse ? 'touch device' : 'pointer hovers'),
+  ].join('');
+  const riskHTML = A.risk.map(r => `<div class="rk l${r.l}"><span>${r.label}</span><i>${[0, 1, 2, 3].map(j => `<b class="${j <= r.l ? 'on' : ''}"></b>`).join('')}</i><em>${r.word}</em></div>`).join('');
   const soft = S.hist.filter(h => h.kind === 'choice' && h.phase === 1);
   const later = S.hist.filter(h => h.kind === 'choice' && h.phase >= 2 && h.phase <= 3);
-  const picks = soft.sort(() => rnd() - 0.5).slice(0, 2).concat(later.sort(() => rnd() - 0.5).slice(0, 1));
-  const quotes = picks.map(h => `<blockquote><q>you said: "${esc(h.text)}"</q><p>${esc(h.dark)}</p></blockquote>`).join('');
-  const nextNote = S.m.changed || S.m.backs ? 'you changed things. the originals are in here too.' : 'you never went back. you never changed a thing. that\'s its own kind of answer.';
-  app.innerHTML = `<article class="file screen-in">
-    <div class="file-head"><span>subject file · ${S.id}</span><span>ending ${e.n} / 70</span><span>classification: ${esc(T.DIM_NAME[e.p])}</span></div>
-    <div class="file-hero"><canvas id="sig" width="400" height="400"></canvas><div><p class="cls-k">archetype</p><h1 class="cls-t">${esc(e.title)}</h1><p class="cls-tag">${esc(e.tagline)}</p></div></div>
-    <section class="file-sec"><h3>assessment</h3><p class="write">${esc(e.text)}</p>
-      <p class="reveal-note">the questions didn't matter. every option was written to sound bad later. what we measured was how you behaved while answering: how long you took, what you almost picked, what you changed, when you looked away. ${esc(nextNote)}</p></section>
-    <section class="file-sec"><h3>measured on your device</h3><dl class="stats">${statsHTML}</dl></section>
-    <section class="file-sec"><h3>trait profile (relative)</h3><div class="traits">${traits}</div></section>
-    <section class="file-sec"><h3>statements, reinterpreted</h3><div class="quotes">${quotes}</div></section>
+  const picks = soft.slice().sort(() => rnd() - 0.5).slice(0, 2).concat(later.slice().sort(() => rnd() - 0.5).slice(0, 1)).sort((a, b) => a.n - b.n);
+  const quotes = picks.map(h => `<tr><td>Q${pad2(h.n)}</td><td>“${esc(h.text)}”</td><td>${esc(h.dark)}</td></tr>`).join('');
+  const disp = A.flagged >= 5 ? 'release not recommended' : A.flagged >= 3 ? 'continued observation' : 'monitor. subject is aware of being monitored.';
+  app.innerHTML = `<article class="file rep screen-in">
+    <header class="rep-head">
+      <div class="lh"><span class="lh-mark"></span><div><b>office of behavioural review</b><small>division ${redact(5)} · records unit</small></div></div>
+      <div class="lh-r"><b>form 7-b</b><small>rev. 3 · page 1 of 1</small></div>
+    </header>
+    <h1 class="rep-title">psychological evaluation report</h1>
+    <p class="rep-sub">behavioural measures recorded on subject's own device · not for distribution</p>
+    <section class="rs"><h3><i>01</i> identifying information</h3><dl class="ident">${idHTML}</dl></section>
+    <section class="rs cls">
+      <span class="stamp-conf" aria-hidden="true">confidential</span>
+      <h3><i>02</i> classification</h3>
+      <div class="cls-grid"><canvas id="sig" width="400" height="400"></canvas><div>
+        <p class="cls-k">classification · ending ${e.n} of 70</p>
+        <h2 class="cls-t">${esc(e.title)}</h2>
+        <p class="cls-tag">${esc(e.tagline)}</p>
+        <div class="conf"><span>match confidence</span><i><b style="--v:${A.conf}%"></b></i><strong>${A.conf}%</strong></div>
+        <p class="cls-meta">primary: ${T.DIM_NAME[e.p]} · modifier: ${e.v.length === 1 && T.DIM_NAME[e.v] ? T.DIM_NAME[e.v] : { N: 'nocturnal', A: 'absent', R: 'reviser', F: 'fast' }[e.v]}</p>
+      </div></div>
+    </section>
+    <section class="rs"><h3><i>03</i> scale scores <small>ss: mean 50, sd 15 · percentile vs reference population (n=${T.REF ? T.REF.n.toLocaleString() : '—'})</small></h3>
+      <div class="sc-grid">${radarSVG(A)}
+        <table class="scales"><thead><tr><th>scale</th><th>raw</th><th>ss</th><th>%ile</th><th></th></tr></thead><tbody>${scales}</tbody></table></div>
+    </section>
+    <section class="rs"><h3><i>04</i> behavioural evidence <small>measured, not self-reported</small></h3>
+      <p class="cap">fig. 1 · response latency per item. <span class="k sl">slowest</span> <span class="k fa">fastest</span> <span class="k to">timed out</span> <span class="k rf">reference median ${fmt(T.REF ? T.REF.latMed : 3.2)}s</span> ↺ revised ◌ looked away</p>
+      ${latencySVG(A)}
+      <dl class="metrics">${metricsHTML}</dl>
+      <table class="items"><thead><tr><th>#</th><th>item · response</th><th>time</th><th>observed</th></tr></thead><tbody>${rows}</tbody></table>
+    </section>
+    <section class="rs"><h3><i>05</i> clinical impressions</h3><ol class="imp">${impressions(A).map(l => `<li>${l}</li>`).join('')}</ol>
+      <p class="summary"><b>examiner summary.</b> ${esc(e.text)}</p></section>
+    <section class="rs"><h3><i>06</i> risk indicators <small>${A.flagged} of ${A.risk.length} flagged</small></h3><div class="risk">${riskHTML}</div></section>
+    <section class="rs"><h3><i>07</i> statements on record, reinterpreted</h3><table class="quotes"><tbody>${quotes}</tbody></table></section>
+    <section class="rs det">
+      <div><p class="det-k">determination</p><p class="det-t">classification: <b>${esc(e.title)}</b> <span>(1 of 70)</span></p><p class="det-s">match confidence ${A.conf}% · ${A.flagged} risk indicators · disposition: ${disp}</p></div>
+      <div class="sig-line"><span class="scrawl">${redact(7)}</span><small>examiner · signed electronically ${tf(A.de)}</small></div>
+    </section>
+    <p class="rep-foot">case ${A.caseNo} · ${redact(4)} · this page has no copy. you are the copy.</p>
     <div class="card-wrap"><canvas id="card" width="1080" height="1350"></canvas>
-      <div class="card-actions"><button class="btn" id="dl" type="button">download file</button><a class="btn ghost" id="share" target="_blank" rel="noopener">share on x</a></div>
+      <div class="card-actions"><button class="btn" id="dl" type="button">download report card</button><a class="btn ghost" id="share" target="_blank" rel="noopener">share on x</a></div>
       <p class="card-note">x can't attach images from a link. download the card and add it to your post.</p></div>
     <div class="after"><button class="linkbtn" id="again" type="button">take it again</button> <span>· it'll remember.</span>
-      <p class="disclaimer">fiction. a prank. not a psychological assessment, not a diagnosis. nothing you did left this device.<br>the test · made by <a href="https://x.com/voidhl" target="_blank" rel="noopener">@voidhl</a></p></div>
+      <p class="disclaimer">fiction. a prank. not a psychological assessment, not a diagnosis. scores are relative to simulated players. nothing you did left this device.<br>the test · made by <a href="https://x.com/voidhl" target="_blank" rel="noopener">@voidhl</a></p></div>
   </article>`;
   scrollTo({ top: 0 });
   drawSigil($('#sig').getContext('2d'), 200, 200, 170, e, true);
-  drawCard(e, m, slow);
-  const text = `took "the test" and it classified me as "${e.title}" (ending ${e.n}/70). it was never about the answers 💀 https://maximusdigitals.github.io/the-test/`;
+  drawCard(A);
+  const text = `took "the test" and got a full psych evaluation report. classification: "${e.title}" (1 of 70), match confidence ${A.conf}%. it was never about the answers 💀 https://maximusdigitals.github.io/the-test/`;
   $('#share').href = 'https://x.com/intent/post?text=' + encodeURIComponent(text);
-  $('#dl').onclick = () => $('#card').toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `the-test-${e.title.replace(/[^a-z0-9]+/g, '-')}.png`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, 'image/png');
+  $('#dl').onclick = () => $('#card').toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `the-test-report-${e.title.replace(/[^a-z0-9]+/g, '-')}.png`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, 'image/png');
   $('#again').onclick = () => location.reload();
 }
 
@@ -503,48 +644,94 @@ function drawSigil(c, cx, cy, R, e, bg) {
   c.restore();
 }
 
-/* ---------------- 1080x1350 card ---------------- */
+/* ---------------- 1080x1350 card: report excerpt ---------------- */
 function wrap(c, text, maxW) { const words = text.split(' '), out = []; let cur = ''; words.forEach(w => { const t = cur ? cur + ' ' + w : w; if (c.measureText(t).width > maxW && cur) { out.push(cur); cur = w; } else cur = t; }); if (cur) out.push(cur); return out; }
-function drawCard(e, m, slow) {
+function drawCard(A) {
+  const e = A.e;
   const cv = $('#card'), c = cv.getContext('2d', { willReadFrequently: true }), W = 1080, H = 1350;
   const SERIF = '"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif', MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace';
+  const INK = '#151515', MUT = '#6f6d66', PAPER = '#ecebe5', RED = '#a3221b', acc = hsl(e, Math.max(34, e.light - 14), 62);
+  c.textBaseline = 'alphabetic'; c.textAlign = 'left';
   c.fillStyle = '#0c0c0e'; c.fillRect(0, 0, W, H);
-  c.strokeStyle = 'rgba(255,255,255,.035)'; c.lineWidth = 1;
-  for (let x = 0; x <= W; x += 40) { c.beginPath(); c.moveTo(x + .5, 0); c.lineTo(x + .5, H); c.stroke(); }
-  for (let y = 0; y <= H; y += 40) { c.beginPath(); c.moveTo(0, y + .5); c.lineTo(W, y + .5); c.stroke(); }
-  const glow = c.createRadialGradient(W / 2, 400, 20, W / 2, 400, 520); glow.addColorStop(0, hsl(e, e.light, 70, 0.22)); glow.addColorStop(1, 'rgba(0,0,0,0)');
-  c.fillStyle = glow; c.fillRect(0, 0, W, H);
-  c.fillStyle = hsl(e); c.fillRect(0, 0, W, 10);
-  c.font = `600 26px ${MONO}`; c.textBaseline = 'alphabetic';
-  c.fillStyle = '#d8d6cf'; c.textAlign = 'left'; c.fillText('SUBJECT FILE · ' + S.id, 64, 74);
-  c.fillStyle = hsl(e); c.textAlign = 'right'; c.fillText(`ENDING ${String(e.n).padStart(2, '0')}/70`, W - 64, 74);
-  drawSigil(c, W / 2, 380, 230, e, false);
+  c.fillStyle = PAPER; c.fillRect(28, 28, W - 56, H - 56);
+  // header bar
+  c.fillStyle = INK; c.fillRect(28, 28, W - 56, 108);
+  c.fillStyle = hsl(e); c.fillRect(28, 136, W - 56, 8);
+  c.font = `700 22px ${MONO}`; c.fillStyle = '#e8e6df'; c.fillText('PSYCHOLOGICAL EVALUATION REPORT', 64, 78);
+  c.font = `500 18px ${MONO}`; c.fillStyle = '#9a988f'; c.fillText('OFFICE OF BEHAVIOURAL REVIEW · FORM 7-B', 64, 108);
+  c.textAlign = 'right'; c.font = `600 20px ${MONO}`; c.fillStyle = '#e8e6df'; c.fillText('CASE ' + A.caseNo, W - 64, 78);
+  c.font = `500 18px ${MONO}`; c.fillStyle = '#9a988f'; c.fillText(`ENDING ${String(e.n).padStart(2, '0')} / 70`, W - 64, 108);
   c.textAlign = 'left';
-  c.font = `600 22px ${MONO}`; c.fillStyle = '#7d7b75'; c.fillText('ARCHETYPE', 64, 720);
-  c.font = `400 74px ${SERIF}`; c.fillStyle = '#efece5';
-  const tl = wrap(c, e.title, W - 128).slice(0, 2); tl.forEach((ln, k) => c.fillText(ln, 60, 798 + k * 80));
-  let y = 798 + (tl.length - 1) * 80 + 58;
-  c.font = `italic 34px ${SERIF}`; c.fillStyle = hsl(e, Math.min(82, e.light + 14));
-  wrap(c, e.tagline, W - 128).slice(0, 2).forEach((ln, k) => c.fillText(ln, 64, y + k * 42));
-  const tg = wrap(c, e.tagline, W - 128).slice(0, 2);
-  y += (tg.length - 1) * 42 + 56;
-  c.font = `400 27px ${SERIF}`; c.fillStyle = '#9d9a92';
-  const wl = wrap(c, e.text, W - 128); let k2 = 0;
-  while (k2 < wl.length && y + k2 * 38 < 1030) { let ln = wl[k2]; if (k2 < wl.length - 1 && y + (k2 + 1) * 38 >= 1030) ln = ln.replace(/[ .,]*$/, '') + '…'; c.fillText(ln, 64, y + k2 * 38); k2++; }
-  // stats grid
-  const box = (x, y, w, label, val) => { c.strokeStyle = 'rgba(255,255,255,.12)'; c.strokeRect(x + .5, y + .5, w, 100); c.font = `600 19px ${MONO}`; c.fillStyle = '#7d7b75'; c.fillText(label, x + 22, y + 36); c.font = `500 40px ${SERIF}`; c.fillStyle = '#efece5'; c.fillText(val, x + 22, y + 83); };
-  const gy = 1062, bw = (W - 128 - 20) / 2;
-  box(64, gy, bw, 'AVG HESITATION', `${fmt(m.avgTime)}s`);
-  box(64 + bw + 20, gy, bw, 'SLOWEST ANSWER', slow ? `${fmt(slow.t)}s` : '—');
-  box(64, gy + 116, bw, 'ANSWERS CHANGED', String(S.m.changed));
-  box(64 + bw + 20, gy + 116, bw, 'LOOKED AWAY', `${S.m.tabs}×`);
-  c.font = `600 22px ${MONO}`; c.fillStyle = '#8d8a83'; c.fillText('the test · by @voidhl', 64, H - 34);
-  c.textAlign = 'right'; c.fillStyle = '#55534e'; c.fillText('maximusdigitals.github.io/the-test', W - 64, H - 34);
+  // identifying line with redaction
+  const dateStr = `${String(A.d.getDate()).padStart(2, '0')} ${MON[A.d.getMonth()].toUpperCase()} ${A.d.getFullYear()}`;
+  c.font = `600 19px ${MONO}`; c.fillStyle = MUT;
+  let x = 64; const seg = (t, gap = 30) => { c.fillText(t, x, 190); x += c.measureText(t).width + gap; };
+  seg('SUBJECT ' + S.id); seg('DATE ' + dateStr); seg('DURATION ' + dur(A.total)); seg('EXAMINER', 12);
+  c.fillStyle = INK; c.fillRect(x, 172, 140, 24);
+  c.strokeStyle = 'rgba(0,0,0,.18)'; c.lineWidth = 2; c.beginPath(); c.moveTo(64, 216); c.lineTo(W - 64, 216); c.stroke();
+  // classification
+  c.font = `700 19px ${MONO}`; c.fillStyle = MUT; c.fillText('02 · CLASSIFICATION', 64, 262);
+  c.font = `400 70px ${SERIF}`; c.fillStyle = INK;
+  const tl = wrap(c, e.title, 700).slice(0, 2); tl.forEach((ln, k) => c.fillText(ln, 60, 336 + k * 74));
+  let y = 336 + (tl.length - 1) * 74 + 52;
+  c.font = `italic 30px ${SERIF}`; c.fillStyle = '#4c4a45';
+  const tg = wrap(c, e.tagline, 720).slice(0, 2); tg.forEach((ln, k) => c.fillText(ln, 62, y + k * 38)); y += (tg.length - 1) * 38 + 50;
+  c.font = `700 20px ${MONO}`; c.fillStyle = acc; c.fillText(`MATCH CONFIDENCE ${A.conf}%`, 64, y);
+  const bx = 64 + c.measureText(`MATCH CONFIDENCE ${A.conf}%`).width + 22; c.fillStyle = 'rgba(0,0,0,.1)'; c.fillRect(bx, y - 14, 220, 10); c.fillStyle = acc; c.fillRect(bx, y - 14, 220 * A.conf / 100, 10);
+  drawSigil(c, 905, 360, 100, e, true);
+  // divider
+  const dv = 590; c.strokeStyle = 'rgba(0,0,0,.18)'; c.beginPath(); c.moveTo(64, dv); c.lineTo(W - 64, dv); c.stroke();
+  c.font = `700 19px ${MONO}`; c.fillStyle = MUT; c.fillText('03 · SCALE PROFILE', 64, dv + 44); c.fillText('06 · RISK INDICATORS', 600, dv + 44);
+  // radar
+  const cx = 315, cy = 866, R = 140, n = T.DIMS.length, ang = k => -Math.PI / 2 + k / n * Math.PI * 2;
+  const P = (k, v) => [cx + Math.cos(ang(k)) * R * v / 100, cy + Math.sin(ang(k)) * R * v / 100];
+  const path = vs => { c.beginPath(); vs.forEach((v, k) => { const [px, py] = P(k, v); k ? c.lineTo(px, py) : c.moveTo(px, py); }); c.closePath(); };
+  [25, 50, 75, 100].forEach(r => { path(T.DIMS.map(() => r)); c.strokeStyle = r === 50 ? 'rgba(0,0,0,.42)' : 'rgba(0,0,0,.14)'; c.setLineDash(r === 50 ? [6, 6] : []); c.lineWidth = r === 50 ? 2 : 1.5; c.stroke(); });
+  c.setLineDash([]);
+  T.DIMS.forEach((k, i) => { const [px, py] = P(i, 100); c.strokeStyle = 'rgba(0,0,0,.14)'; c.beginPath(); c.moveTo(cx, cy); c.lineTo(px, py); c.stroke(); });
+  path(T.DIMS.map(k => A.ss[k])); c.fillStyle = hsl(e, e.light, 62, 0.32); c.fill(); c.strokeStyle = acc; c.lineWidth = 4; c.stroke();
+  T.DIMS.forEach((k, i) => { const [px, py] = P(i, A.ss[k]); c.fillStyle = acc; c.beginPath(); c.arc(px, py, 6, 0, Math.PI * 2); c.fill(); });
+  T.DIMS.forEach((k, i) => {
+    const [px, py] = P(i, 126); c.textAlign = px < cx - 10 ? 'right' : px > cx + 10 ? 'left' : 'center';
+    c.font = `600 18px ${MONO}`; c.fillStyle = '#3c3a36'; c.fillText(T.DIM_NAME[k].toUpperCase(), px, py);
+    c.font = `700 22px ${MONO}`; c.fillStyle = A.pct[k] >= 85 ? RED : INK; c.fillText(String(A.ss[k]), px, py + 24);
+  });
+  c.textAlign = 'left';
+  // risk flags: top 5 by level
+  const flags = A.risk.filter(r => r.l >= 0).slice().sort((a, b) => b.l - a.l || (b.v || 0) - (a.v || 0)).slice(0, 5);
+  flags.forEach((r, k) => {
+    const fy = dv + 112 + k * 74;
+    c.font = `600 21px ${MONO}`; c.fillStyle = INK; c.fillText(r.label.toUpperCase(), 600, fy);
+    for (let j = 0; j < 4; j++) { c.fillStyle = j <= r.l ? (r.l >= 2 ? RED : '#3c3a36') : 'rgba(0,0,0,.12)'; c.fillRect(600 + j * 44, fy + 16, 38, 10); }
+    c.font = `800 21px ${MONO}`; c.fillStyle = r.l >= 2 ? RED : '#3c3a36'; c.textAlign = 'right'; c.fillText(r.word.toUpperCase(), W - 64, fy + 26); c.textAlign = 'left';
+  });
+  // 3 key stats
+  const sy = 1096; c.strokeStyle = 'rgba(0,0,0,.18)'; c.beginPath(); c.moveTo(64, sy - 26); c.lineTo(W - 64, sy - 26); c.stroke();
+  const slowV = A.slow ? (A.slow.kind === 'timeout' ? 'TIMED OUT' : `${fmt(A.slow.t)}s`) : '—';
+  const third = S.m.falseMem ? ['FALSE MEMORY', 'ACCEPTED'] : ['CONSISTENCY', `${A.consistency}/100`];
+  const stats = [['HESITATION INDEX', `${A.hesitation}/100`, A.hesitation >= 60], ['SLOWEST RESPONSE', slowV, A.slow && A.slow.t > 6, A.slow ? `Q${A.slow.n}` : ''], [third[0], third[1], S.m.falseMem || A.consistency < 50]];
+  const bw = (W - 128 - 40) / 3;
+  stats.forEach(([lab, val, hot, sub], k) => {
+    const bx2 = 64 + k * (bw + 20);
+    c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = 2; c.strokeRect(bx2 + 1, sy + 1, bw, 118);
+    c.font = `700 17px ${MONO}`; c.fillStyle = MUT; c.fillText(lab, bx2 + 22, sy + 38);
+    c.font = `500 46px ${SERIF}`; c.fillStyle = hot ? RED : INK; c.fillText(val, bx2 + 22, sy + 96);
+    if (sub) { c.font = `600 18px ${MONO}`; c.fillStyle = MUT; c.textAlign = 'right'; c.fillText(sub, bx2 + bw - 18, sy + 96); c.textAlign = 'left'; }
+  });
+  // footer
+  c.font = `500 17px ${MONO}`; c.fillStyle = '#8b8880'; c.fillText('fiction. a prank. not a psychological assessment.', 64, H - 86);
+  c.font = `700 20px ${MONO}`; c.fillStyle = INK; c.fillText('the test · by @voidhl', 64, H - 54);
+  c.textAlign = 'right'; c.fillStyle = MUT; c.fillText('maximusdigitals.github.io/the-test', W - 64, H - 54); c.textAlign = 'left';
+  // confidential stamp
+  c.save(); c.translate(830, 528); c.rotate(-0.16); c.globalAlpha = 0.82;
+  c.strokeStyle = RED; c.lineWidth = 6; c.strokeRect(-190, -46, 380, 92); c.lineWidth = 2; c.strokeRect(-180, -36, 360, 72);
+  c.font = `800 46px ${MONO}`; c.fillStyle = RED; c.textAlign = 'center'; c.fillText('CONFIDENTIAL', 0, 16); c.restore();
+  // paper grain
   const id = c.getImageData(0, 0, W, H), d = id.data, r = mulberry(e.n);
-  for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * 16; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  for (let i = 0; i < d.length; i += 4) { const nz = (r() - 0.5) * 14; d[i] += nz; d[i + 1] += nz; d[i + 2] += nz; }
   c.putImageData(id, 0, 0);
 }
 
-window.__tt = { S, drawSigil, get phase() { return phase; } };
+window.__tt = { S, drawSigil, drawCard, report, get phase() { return phase; } };
 intro();
 })();
