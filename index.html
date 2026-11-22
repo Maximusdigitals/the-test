@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>the test — find your archetype</title>
+<meta name="description" content="a gentle 15-question reflection. find your archetype. private, on-device.">
+<meta name="theme-color" content="#f4efe7">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='38' fill='%237d8f69'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-phase="0">
+
+<!-- phase decor layers -->
+<div class="decor d1" aria-hidden="true">
+  <svg class="sprig s-a" viewBox="0 0 120 260"><path d="M60 258 C58 190 62 120 60 10" /><path d="M60 200 C30 190 18 170 14 150 C40 152 56 170 60 200Z"/><path d="M60 160 C90 150 104 130 108 110 C82 112 64 130 60 160Z"/><path d="M60 118 C34 108 24 90 22 72 C46 76 58 94 60 118Z"/><path d="M60 80 C84 70 94 54 96 38 C74 42 62 58 60 80Z"/></svg>
+  <svg class="sprig s-b" viewBox="0 0 120 260"><path d="M60 258 C58 190 62 120 60 10" /><path d="M60 200 C30 190 18 170 14 150 C40 152 56 170 60 200Z"/><path d="M60 160 C90 150 104 130 108 110 C82 112 64 130 60 160Z"/><path d="M60 118 C34 108 24 90 22 72 C46 76 58 94 60 118Z"/></svg>
+  <div class="sun"></div>
+</div>
+<div class="decor d2" aria-hidden="true"><div class="gridlines"></div><div class="barcode"></div><div class="d2-tag">form 7-b · confidential</div></div>
+<div class="decor d3" aria-hidden="true"><div class="lamp"></div></div>
+<div class="decor d4" aria-hidden="true">
+  <svg id="iris" viewBox="-100 -100 200 200">
+    <defs><radialGradient id="ig" r="1"><stop offset="0" stop-color="#2a0505"/><stop offset=".55" stop-color="#140202"/><stop offset="1" stop-color="#060606" stop-opacity="0"/></radialGradient></defs>
+    <circle r="96" fill="url(#ig)"/>
+    <g id="irisLines" stroke="#3a0b0b" stroke-width=".5" opacity=".8"></g>
+    <circle r="60" fill="none" stroke="#4a0e0e" stroke-width=".6"/>
+    <circle r="34" fill="none" stroke="#2e0808" stroke-width="2"/>
+    <g id="pupil"><circle r="22" fill="#000"/><circle r="22" fill="none" stroke="#5c1010" stroke-width=".6"/></g>
+  </svg>
+</div>
+<div class="fx-grain" aria-hidden="true"></div>
+<div class="fx-vig" aria-hidden="true"></div>
+
+<header class="top">
+  <div class="brand"><span class="mark"></span><span id="brand">the test</span></div>
+  <div class="prog" id="prog" hidden><span id="progLabel"></span><div class="bar"><i id="progBar"></i></div></div>
+</header>
+
+<main id="app" class="app" aria-live="polite"></main>
+
+<div id="toast" class="toast" role="status"></div>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-card">
+    <p class="modal-k">are you sure?</p>
+    <p class="modal-t" id="modalText"></p>
+    <div class="modal-actions"><button type="button" id="modalSure" class="btn">i'm sure</button><button type="button" id="modalChange" class="btn ghost">change it</button></div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
